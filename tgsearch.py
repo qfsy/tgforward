@@ -215,7 +215,7 @@ class TGForwarder:
 if __name__ == '__main__':
     channels_to_monitor = ['XiangxiuNB','yunpanpan','kuakeyun']  # 监控的频道
     groups_to_monitor = ['alypzyhzq','Mbox115']  # 监控的群组
-    forward_to_channel = 'qfsybot'  # 转发到的频道或群组
+    forward_to_channel = 'qfsy_tgsearch'  # 转发到的频道或群组
     limit = 10  # 监控最近消息数
     replies_limit = 1  # 监控消息中的评论数
     kw = ['链接', '片名', '名称']  # 匹配的关键词
