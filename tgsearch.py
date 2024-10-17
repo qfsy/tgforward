@@ -212,12 +212,11 @@ class TGForwarder:
         with self.client.start():
             self.client.loop.run_until_complete(self.main())
 
-
 if __name__ == '__main__':
-    channels_to_monitor = ['channel1', 'channel2']  # 监控的频道
-    groups_to_monitor = ['group1']  # 监控的群组
-    forward_to_channel = 'my_target_channel'  # 转发到的频道或群组
-    limit = 5  # 监控最近消息数
+    channels_to_monitor = ['XiangxiuNB','yunpanpan','kuakeyun']  # 监控的频道
+    groups_to_monitor = ['alypzyhzq','Mbox115']  # 监控的群组
+    forward_to_channel = 'qfsybot'  # 转发到的频道或群组
+    limit = 10  # 监控最近消息数
     replies_limit = 1  # 监控消息中的评论数
     kw = ['链接', '片名', '名称']  # 匹配的关键词
     ban = ['预告', '盈利', 'https://t.me/']  # 屏蔽关键词
@@ -225,11 +224,12 @@ if __name__ == '__main__':
     nokwforwards = True  # 处理不含关键词的评论
     fdown = True  # 下载并重新发送图片或视频
     download_folder = 'downloads'  # 下载文件的文件夹
-    api_id = 1234567  # Telegram API ID
-    api_hash = 'abcdef123456'  # Telegram API Hash
-    string_session = 'your_string_session'  # Telegram 会话字符串
+    api_id = int(os.environ.get('API_ID'))  # 从环境变量中读取 api_id
+    api_hash = os.environ.get('API_HASH')  # 从环境变量中读取 api_hash
+    string_session = os.environ.get('STRING_SESSION')  # 从环境变量中读取 string_session
     proxy = None  # 如果需要代理则配置代理
     checknum = 100  # 检查最近多少条消息
 
     TGForwarder(api_id, api_hash, string_session, channels_to_monitor, groups_to_monitor, forward_to_channel, limit,
                 replies_limit, kw, ban, nokwforwards, fdown, download_folder, proxy, checknum).run()
+
