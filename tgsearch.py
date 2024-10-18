@@ -332,7 +332,7 @@ if __name__ == '__main__':
     ban = ['预告', '预感', 'https://t.me/', '盈利', '即可观看','书籍','电子书','图书','软件','安卓']  # 屏蔽关键词
     try_join = False  # 是否尝试自动加入未加入的频道或群组
     nokwforwards = True  # 处理不含关键词的评论
-	only_send = True   # 图文资源只主动发送，不转发，可以降低限制风险；不支持视频场景
+    only_send = True   # 图文资源只主动发送，不转发，可以降低限制风险；不支持视频场景
     fdown = True  # 下载并重新发送图片或视频
     download_folder = 'downloads'  # 下载文件的文件夹
     api_id = int(os.environ.get('API_ID'))  # 从环境变量中读取 api_id
