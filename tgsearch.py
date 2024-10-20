@@ -339,7 +339,7 @@ if __name__ == '__main__':
     groups_to_monitor = []
     forward_to_channel = os.environ['FORWARD_TO_CHANNEL']
     # 监控最近消息数
-    limit = 30
+    limit = 10
     # 监控消息中评论数，有些视频、资源链接被放到评论中
     replies_limit = 1
     kw = ['链接', '片名', '名称', '剧名','pan.quark.cn','115.com','alipan.com','aliyundrive.com']
