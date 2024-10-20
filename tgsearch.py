@@ -335,7 +335,7 @@ class TGForwarder:
 
 
 if __name__ == '__main__':
-    channels_to_monitor = ['DSJ1314', 'guaguale115', 'hao115', 'shareAliyun', 'alyp_JLP', 'Quark_Share_Channel']
+    channels_to_monitor = ['DSJ1314','guaguale115','hao115','shareAliyun','alyp_JLP','Quark_Share_Channel','Quark_Movies','kuakeyun']
     groups_to_monitor = []
     forward_to_channel = os.environ['FORWARD_TO_CHANNEL']
     # 监控最近消息数
