@@ -181,21 +181,21 @@ class TGForwarder:
             print(f"从 {chat_name} 转发资源到 {self.forward_to_channel} 失败: {e}")
 
     async def checkhistory(self):
-    links = []
-    sizes = []
-    if os.path.exists(self.history):
-        with open(self.history, 'r', encoding='utf-8') as f:
-            content = f.read()
-            if content:  # 仅当内容不为空时解析 JSON
-                self.checkbox = json.loads(content)
-                links = self.checkbox.get('links', [])
-                sizes = self.checkbox.get('sizes', [])
-            else:
-                # 如果文件为空，初始化
-                self.checkbox = {'links': [], 'sizes': []}
-    else:
-        self.checkbox = {'links': [], 'sizes': []}  # 文件不存在时初始化
-        self.checknum = 5000
+        links = []
+        sizes = []
+        if os.path.exists(self.history):
+            with open(self.history, 'r', encoding='utf-8') as f:
+                content = f.read()
+                if content:  # 仅当内容不为空时解析 JSON
+                    self.checkbox = json.loads(content)
+                    links = self.checkbox.get('links', [])
+                    sizes = self.checkbox.get('sizes', [])
+                else:
+                    # 如果文件为空，初始化
+                    self.checkbox = {'links': [], 'sizes': []}
+        else:
+            self.checkbox = {'links': [], 'sizes': []}  # 文件不存在时初始化
+            self.checknum = 5000
         chat = await self.client.get_entity(self.forward_to_channel)
         messages = self.client.iter_messages(chat, limit=self.checknum)
         async for message in messages:
