@@ -26,18 +26,17 @@ if os.environ.get("HTTP_PROXY"):
 
 
 class TGForwarder:
-    def __init__(self, api_id, api_hash, string_session, channels_to_monitor, groups_to_monitor, forward_to_channel,
+    def __init__(self, api_id, api_hash, string_session, channels_groups_monitor, forward_to_channel,
                  limit, replies_limit, kw, ban, only_send, nokwforwards, fdown, download_folder, proxy, checknum, linkvalidtor):
         self.checkbox = {}
         self.checknum = checknum
-        self.history = 'history.json'
         # 正则表达式匹配资源链接
-        self.pattern = r"(?:链接：\s*)?(https?://[^\s]+|magnet:.+)"
+        # self.pattern = r"(?:链接：\s*)?(https?://[^\s]+|magnet:.+)"
+        self.pattern = r"(?:链接：\s*)?((?!https?://t\.me)https?://[^\s'】\n]+(?=\n|$)|magnet:\?xt=urn:btih:[a-zA-Z0-9]+)"
         self.api_id = api_id
         self.api_hash = api_hash
         self.string_session = string_session
-        self.channels_to_monitor = channels_to_monitor
-        self.groups_to_monitor = groups_to_monitor
+        self.channels_groups_monitor = channels_groups_monitor
         self.forward_to_channel = forward_to_channel
         self.limit = limit
         self.replies_limit = replies_limit
@@ -55,7 +54,7 @@ class TGForwarder:
 
     def random_wait(self, min_ms, max_ms):
         min_sec = min_ms / 1000
-        max_sec = max_ms / 5000
+        max_sec = max_ms / 1000
         wait_time = random.uniform(min_sec, max_sec)
         time.sleep(wait_time)
 
@@ -205,14 +204,6 @@ class TGForwarder:
         # post_ids = []
         links = []
         sizes = []
-        if os.path.exists(self.history):
-            with open(self.history, 'r', encoding='utf-8') as f:
-                self.checkbox = json.loads(f.read())
-                links = self.checkbox.get('links')
-                sizes = self.checkbox.get('sizes')
-        else:
-            self.checknum = 5000
-
         chat = await self.client.get_entity(self.forward_to_channel)
         messages = self.client.iter_messages(chat, limit=self.checknum)
         async for message in messages:
@@ -318,7 +309,7 @@ class TGForwarder:
         await self.checkhistory()
         if not os.path.exists(self.download_folder):
             os.makedirs(self.download_folder)
-        for chat_name in self.channels_to_monitor + self.groups_to_monitor:
+        for chat_name in self.channels_groups_monitor:
             global total
             total = 0
             await self.forward_messages(chat_name, self.forward_to_channel)
@@ -326,24 +317,20 @@ class TGForwarder:
         if self.fdown:
             shutil.rmtree(self.download_folder)
 
-        with open(self.history,'w+',encoding='utf-8') as f:
-            f.write(json.dumps(self.checkbox))
-
     def run(self):
         with self.client.start():
             self.client.loop.run_until_complete(self.main())
 
 
 if __name__ == '__main__':
-    channels_to_monitor = ['DSJ1314','guaguale115','hao115','shareAliyun','alyp_JLP','Quark_Share_Channel','Quark_Movies','kuakeyun']
-    groups_to_monitor = []
+    channels_groups_monitor = ['DSJ1314','guaguale115','hao115','shareAliyun','alyp_JLP','Quark_Share_Channel','Quark_Movies','kuakeyun']
     forward_to_channel = os.environ['FORWARD_TO_CHANNEL']
     # 监控最近消息数
     limit = 10
     # 监控消息中评论数，有些视频、资源链接被放到评论中
     replies_limit = 1
-    kw = ['链接', '片名', '名称', '剧名','pan.quark.cn','115.com','alipan.com','aliyundrive.com']
-    ban = ['预告', '预感', 'https://t.me/', '盈利', '即可观看', '书籍', '电子书', '图书', '软件', '安卓', '风水', '教程', '课程', 'Android']
+    kw = ['链接', '片名', '名称', '剧名','pan.quark.cn','115.com','alipan.com','aliyundrive.com','夸克云盘','阿里云盘','磁力链接']
+    ban = ['预告', '预感', 'https://t.me/', '盈利', '即可观看','书籍','电子书','图书','软件','安卓','Android','课程','作品','教程','全书','名著','epub','pdf','抽奖','完整版']
     # 尝试加入公共群组频道，无法过验证
     try_join = False
     # 消息中不含关键词图文，但有些资源被放到消息评论中，如果需要监控评论中资源，需要开启，否则建议关闭
@@ -358,11 +345,9 @@ if __name__ == '__main__':
     string_session = os.environ['STRING_SESSION']
     # 默认不开启代理
     proxy = None
-    # 检测自己频道最近 500 条消息是否已经包含该资源
+    # 检测自己频道最近500条消息是否已经包含该资源
     checknum = 500
     # 对网盘链接有效性检测
     linkvalidtor = False
-    forwarder = TGForwarder(api_id, api_hash, string_session, channels_to_monitor, groups_to_monitor, forward_to_channel, limit, replies_limit, kw,
-                             ban, only_send, nokwforwards, fdown, download_folder, proxy, checknum, linkvalidtor)
-    forwarder.run()
-
+    TGForwarder(api_id, api_hash, string_session, channels_groups_monitor, forward_to_channel, limit, replies_limit, kw,
+                ban, only_send, nokwforwards, fdown, download_folder, proxy, checknum, linkvalidtor).run()
