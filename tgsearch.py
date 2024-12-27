@@ -9,7 +9,7 @@ import re
 import asyncio
 import urllib.parse
 from datetime import datetime, timezone, timedelta
-from telethon import TelegramClient,functions
+from telethon import TelegramClient,functions, events
 from telethon.tl.types import MessageMediaPhoto, MessageEntityTextUrl
 from telethon.sessions import StringSession
 from telethon.tl.functions.messages import GetHistoryRequest
@@ -31,7 +31,7 @@ if os.environ.get("HTTP_PROXY"):
 
 class TGForwarder:
     def __init__(self, api_id, api_hash, string_session, channels_groups_monitor, forward_to_channel,
-                 limit, replies_limit, kw, ban, only_send, nokwforwards, fdown, download_folder, proxy, checknum, linkvalidtor, replacements, channel_match, hyperlink_text, past_years):
+                 limit, replies_limit, include, exclude, only_send, nokwforwards, fdown, download_folder, proxy, checknum, linkvalidtor, replacements, channel_match, hyperlink_text, past_years):
         self.checkbox = {}
         self.checknum = checknum
         self.history = 'history.json'
@@ -44,15 +44,15 @@ class TGForwarder:
         self.forward_to_channel = forward_to_channel
         self.limit = limit
         self.replies_limit = replies_limit
-        self.kw = kw
+        self.include = include
         # 获取当前年份
         current_year = datetime.now().year
         # 过滤今年之前的影视资源
         if not past_years:
             years_list = [str(year) for year in range(1895, current_year)]
-            self.ban = ban+years_list
+            self.exclude = exclude+years_list
         else:
-            self.ban = ban
+            self.exclude = exclude
         self.hyperlink_text = hyperlink_text
         self.replacements = replacements
         self.channel_match = channel_match
@@ -70,10 +70,10 @@ class TGForwarder:
         max_sec = max_ms / 1000
         wait_time = random.uniform(min_sec, max_sec)
         time.sleep(wait_time)
-    def contains(self, s, kw):
-        return any(k in s for k in kw)
-    def nocontains(self, s, ban):
-        return not any(k in s for k in ban)
+    def contains(self, s, include):
+        return any(k in s for k in include)
+    def nocontains(self, s, exclude):
+        return not any(k in s for k in exclude)
     def replace_targets(self, message: str):
         """
         根据用户自定义的替换规则替换文本内容
@@ -95,11 +95,18 @@ class TGForwarder:
     async def dispatch_channel(self, message, jumpLink=''):
         hit = False
         if self.channel_match:
-            for target_channel, kw in self.channel_match.items():
-                if self.contains(message.message, kw):
-                    await self.send(message,target_channel, jumpLink)
-                    hit = True
-        if not hit:
+            for rule in self.channel_match:
+                if rule.get('include'):
+                    if not self.contains(message.message, rule['include']):
+                        continue
+                if rule.get('exclude'):
+                    if not self.nocontains(message.message, rule['exclude']):
+                        continue
+                await self.send(message, rule['target'], jumpLink)
+                hit = True
+            if not hit:
+                await self.send(message, self.forward_to_channel, jumpLink)
+        else:
             await self.send(message, self.forward_to_channel, jumpLink)
     async def send(self, message, target_chat_name, jumpLink=''):
         text = message.message
@@ -149,129 +156,6 @@ class TGForwarder:
                 print(f"Unexpected error while fetching replies: {e.__class__.__name__} {e}")
                 break
         return all_replies
-    async def redirect_url(self, message):
-        link = []
-        if message.entities:
-            for entity in message.entities:
-                if isinstance(entity, MessageEntityTextUrl):
-                    if 'https://telegra.ph' in entity.url:
-                        continue
-                    else:
-                        url = urllib.parse.unquote(entity.url)
-                        matches = re.findall(self.pattern, url)
-                        if matches:
-                            link = matches[0]
-        return link
-    async def forward_messages(self, chat_name, limit):
-        global total
-        links = self.checkbox['links']
-        sizes = self.checkbox['sizes']
-        try:
-            if try_join:
-                await self.client(JoinChannelRequest(chat_name))
-            chat = await self.client.get_entity(chat_name)
-            messages = self.client.iter_messages(chat, limit=limit, reverse=False)
-            async for message in messages:
-                jumpLink = await self.redirect_url(message)
-                self.random_wait(200, 1000)
-                forwards = message.forwards
-                if message.media:
-                    # 视频
-                    if hasattr(message.document, 'mime_type') and self.contains(message.document.mime_type,'video') and self.nocontains(message.message, self.ban):
-                        if forwards:
-                            size = message.document.size
-                            if size not in sizes:
-                                await self.client.forward_messages(self.forward_to_channel, message)
-                                sizes.append(size)
-                                total += 1
-                            else:
-                                print(f'视频已经存在，size: {size}')
-                    # 图文(匹配关键词)
-                    elif self.contains(message.message, self.kw) and message.message and self.nocontains(message.message, self.ban):
-                        matches = re.findall(self.pattern, message.message)
-                        if matches or jumpLink:
-                            link = jumpLink if jumpLink else matches[0]
-                            if link not in links:
-                                link_ok = True if not self.linkvalidtor else False
-                                if self.linkvalidtor:
-                                    result = await self.netdisklinkvalidator(matches)
-                                    for r in result:
-                                        if r[1]:
-                                            link_ok = True
-                                if forwards and not self.only_send and link_ok:
-                                    await self.client.forward_messages(self.forward_to_channel, message)
-                                    total += 1
-                                    links.append(link)
-                                elif link_ok:
-                                    await self.dispatch_channel(message, jumpLink)
-                                    total += 1
-                                    links.append(link)
-                            else:
-                                print(f'链接已存在，link: {link}')
-                    # 图文(不含关键词，默认nokwforwards=False)，资源被放到评论中
-                    elif self.nokwforwards and message.message and self.nocontains(message.message, self.ban):
-                        replies = await self.get_all_replies(chat_name,message)
-                        replies = replies[-self.replies_limit:]
-                        for r in replies:
-                            # 评论中的视频
-                            if hasattr(r.document, 'mime_type') and self.contains(r.document.mime_type,'video') and self.nocontains(r.message, self.ban):
-                                size = r.document.size
-                                if size not in sizes:
-                                    await self.client.forward_messages(self.forward_to_channel, r)
-                                    total += 1
-                                    sizes.append(size)
-                                else:
-                                    print(f'视频已经存在，size: {size}')
-                            # 评论中链接关键词
-                            elif self.contains(r.message, self.kw) and r.message and self.nocontains(r.message, self.ban):
-                                matches = re.findall(self.pattern, r.message)
-                                if matches:
-                                    link = matches[0]
-                                    if link not in links:
-                                        link_ok = True if not self.linkvalidtor else False
-                                        if self.linkvalidtor:
-                                            result = await self.netdisklinkvalidator(matches)
-                                            for r in result:
-                                                if r[1]:
-                                                    link_ok = r[1]
-                                        if forwards and not self.only_send and link_ok:
-                                            await self.client.forward_messages(self.forward_to_channel, r)
-                                            total += 1
-                                            links.append(link)
-                                        elif link_ok:
-                                            await self.dispatch_channel(message)
-                                            total += 1
-                                            links.append(link)
-                                    else:
-                                        print(f'链接已存在，link: {link}')
-                # 纯文本消息
-                elif message.message:
-                    if self.contains(message.message, self.kw) and self.nocontains(message.message, self.ban):
-                        matches = re.findall(self.pattern, message.message)
-                        if matches or jumpLink:
-                            link = jumpLink if jumpLink else matches[0]
-                            if link not in links:
-                                link_ok = True if not self.linkvalidtor else False
-                                if self.linkvalidtor:
-                                    result = await self.netdisklinkvalidator(matches)
-                                    for r in result:
-                                        if r[1]:
-                                            link_ok = True
-                                if forwards and not self.only_send and link_ok:
-                                    await self.client.forward_messages(self.forward_to_channel, message)
-                                    total += 1
-                                    links.append(link)
-                                elif link_ok:
-                                    await self.dispatch_channel(message, jumpLink)
-                                    total += 1
-                                    links.append(link)
-                            else:
-                                print(f'链接已存在，link: {link}')
-            self.checkbox['links'] = links
-            self.checkbox['sizes'] = sizes
-            print(f"从 {chat_name} 转发资源到 {self.forward_to_channel} total: {total}")
-        except Exception as e:
-            print(f"从 {chat_name} 转发资源到 {self.forward_to_channel} 失败: {e}")
     async def checkhistory(self):
         '''
         检索历史消息用于过滤去重
@@ -284,7 +168,7 @@ class TGForwarder:
                 links = self.checkbox.get('links')
                 sizes = self.checkbox.get('sizes')
         else:
-            self.checknum = 5000
+            self.checknum = 500
 
         chat = await self.client.get_entity(self.forward_to_channel)
         messages = self.client.iter_messages(chat, limit=self.checknum)
@@ -297,8 +181,8 @@ class TGForwarder:
                 matches = re.findall(self.pattern, message.message)
                 for match in matches:
                     links.append(match)
-        self.checkbox['links'] = list(set(links))
-        self.checkbox['sizes'] = list(set(sizes))
+        self.checkbox['links'] = list(set(links))[:self.checknum]
+        self.checkbox['sizes'] = list(set(sizes))[:self.checknum]
     async def check_aliyun(self,share_id):
         api_url = "https://api.aliyundrive.com/adrive/v3/share_link/get_share_by_anonymous"
         headers = {"Content-Type": "application/json"}
@@ -410,7 +294,7 @@ class TGForwarder:
         # 获取第一条消息的位置
         first_message_pos = result.offset_id_offset
         # 今日消息总数就是从第一条消息到最新消息的距离
-        today_count = first_message_pos + 1
+        today_count = first_message_pos if first_message_pos else 0
         msg = f'今日共更新【{today_count}】条资源'
         return msg
     async def del_channel_forward_count_msg(self):
@@ -422,23 +306,171 @@ class TGForwarder:
             await self.client.delete_messages(self.forward_to_channel, [forward_to_channel_message_id])
 
         if self.channel_match:
-            for target_channel, _ in self.channel_match.items():
-                target_channel_msg_id = chat_forward_count_msg_id.get(target_channel)
-                await self.client.delete_messages(target_channel, [target_channel_msg_id])
+            for rule in self.channel_match:
+                target_channel_msg_id = chat_forward_count_msg_id.get(rule['target'])
+                await self.client.delete_messages(rule['target'], [target_channel_msg_id])
     async def send_daily_forwarded_count(self):
         await self.del_channel_forward_count_msg()
 
         chat_forward_count_msg_id = {}
         msg = await self.daily_forwarded_count(self.forward_to_channel)
         sent_message = await self.client.send_message(self.forward_to_channel, msg)
+        # 置顶消息
+        await self.client.pin_message(self.forward_to_channel, sent_message.id)
+        await self.client.delete_messages(self.forward_to_channel, [sent_message.id + 1])
 
         chat_forward_count_msg_id[self.forward_to_channel] = sent_message.id
         if self.channel_match:
-            for target_channel, _ in self.channel_match.items():
-                m = await self.daily_forwarded_count(target_channel)
-                sm = await self.client.send_message(target_channel, m)
-                chat_forward_count_msg_id[target_channel] = sm.id
+            for rule in self.channel_match:
+                m = await self.daily_forwarded_count(rule['target'])
+                sm = await self.client.send_message(rule['target'], m)
+                chat_forward_count_msg_id[rule['target']] = sm.id
+                await self.client.pin_message(rule['target'], sm.id)
+                await self.client.delete_messages(rule['target'], [sm.id+1])
         self.checkbox["chat_forward_count_msg_id"] = chat_forward_count_msg_id
+    async def redirect_url(self, message):
+        link = []
+        if message.entities:
+            for entity in message.entities:
+                if isinstance(entity, MessageEntityTextUrl):
+                    if 'https://telegra.ph' in entity.url:
+                        continue
+                    elif 'start' in entity.url:
+                        link = await self.tgbot(entity.url)
+                        return link
+                    else:
+                        url = urllib.parse.unquote(entity.url)
+                        matches = re.findall(self.pattern, url)
+                        if matches:
+                            link = matches[0]
+                        return link
+    async def tgbot(self,url):
+        # 发送 /start 命令，带上自定义参数
+        # 提取机器人用户名
+        bot_username = url.split('/')[-1].split('?')[0]
+        # 提取命令和参数
+        query_string = url.split('?')[1]
+        command, parameter = query_string.split('=')
+        await self.client.send_message(bot_username, f'/{command} {parameter}')
+        # 等待一段时间以便消息到达
+        await asyncio.sleep(2)
+        # 获取最近的消息
+        messages = await self.client.get_messages(bot_username, limit=1)  # 获取最近5条消息
+        # print(f'消息内容: {messages[0].message}')
+        message = messages[0].message
+        links = re.findall(r'(https?://[^\s]+)', message)
+        link = links[0] if links else ''
+        return link
+    async def forward_messages(self, chat_name, limit):
+        global total
+        links = self.checkbox['links']
+        sizes = self.checkbox['sizes']
+        try:
+            if try_join:
+                await self.client(JoinChannelRequest(chat_name))
+            chat = await self.client.get_entity(chat_name)
+            messages = self.client.iter_messages(chat, limit=limit, reverse=False)
+            async for message in messages:
+                jumpLink = await self.redirect_url(message)
+                self.random_wait(200, 1000)
+                forwards = message.forwards
+                if message.media:
+                    # 视频
+                    if hasattr(message.document, 'mime_type') and self.contains(message.document.mime_type,'video') and self.nocontains(message.message, self.exclude):
+                        if forwards:
+                            size = message.document.size
+                            if size not in sizes:
+                                await self.client.forward_messages(self.forward_to_channel, message)
+                                sizes.append(size)
+                                total += 1
+                            else:
+                                print(f'视频已经存在，size: {size}')
+                    # 图文(匹配关键词)
+                    elif self.contains(message.message, self.include) and message.message and self.nocontains(message.message, self.exclude):
+                        matches = re.findall(self.pattern, message.message)
+                        if matches or jumpLink:
+                            link = jumpLink if jumpLink else matches[0]
+                            if link not in links:
+                                link_ok = True if not self.linkvalidtor else False
+                                if self.linkvalidtor:
+                                    result = await self.netdisklinkvalidator(matches)
+                                    for r in result:
+                                        if r[1]:
+                                            link_ok = True
+                                if forwards and not self.only_send and link_ok:
+                                    await self.client.forward_messages(self.forward_to_channel, message)
+                                    total += 1
+                                    links.append(link)
+                                elif link_ok:
+                                    await self.dispatch_channel(message, jumpLink)
+                                    total += 1
+                                    links.append(link)
+                            else:
+                                print(f'链接已存在，link: {link}')
+                    # 图文(不含关键词，默认nokwforwards=False)，资源被放到评论中
+                    elif self.nokwforwards and message.message and self.nocontains(message.message, self.exclude):
+                        replies = await self.get_all_replies(chat_name,message)
+                        replies = replies[-self.replies_limit:]
+                        for r in replies:
+                            # 评论中的视频
+                            if hasattr(r.document, 'mime_type') and self.contains(r.document.mime_type,'video') and self.nocontains(r.message, self.exclude):
+                                size = r.document.size
+                                if size not in sizes:
+                                    await self.client.forward_messages(self.forward_to_channel, r)
+                                    total += 1
+                                    sizes.append(size)
+                                else:
+                                    print(f'视频已经存在，size: {size}')
+                            # 评论中链接关键词
+                            elif self.contains(r.message, self.include) and r.message and self.nocontains(r.message, self.exclude):
+                                matches = re.findall(self.pattern, r.message)
+                                if matches:
+                                    link = matches[0]
+                                    if link not in links:
+                                        link_ok = True if not self.linkvalidtor else False
+                                        if self.linkvalidtor:
+                                            result = await self.netdisklinkvalidator(matches)
+                                            for r in result:
+                                                if r[1]:
+                                                    link_ok = r[1]
+                                        if forwards and not self.only_send and link_ok:
+                                            await self.client.forward_messages(self.forward_to_channel, r)
+                                            total += 1
+                                            links.append(link)
+                                        elif link_ok:
+                                            await self.dispatch_channel(message)
+                                            total += 1
+                                            links.append(link)
+                                    else:
+                                        print(f'链接已存在，link: {link}')
+                # 纯文本消息
+                elif message.message:
+                    if self.contains(message.message, self.include) and self.nocontains(message.message, self.exclude):
+                        matches = re.findall(self.pattern, message.message)
+                        if matches or jumpLink:
+                            link = jumpLink if jumpLink else matches[0]
+                            if link not in links:
+                                link_ok = True if not self.linkvalidtor else False
+                                if self.linkvalidtor:
+                                    result = await self.netdisklinkvalidator(matches)
+                                    for r in result:
+                                        if r[1]:
+                                            link_ok = True
+                                if forwards and not self.only_send and link_ok:
+                                    await self.client.forward_messages(self.forward_to_channel, message)
+                                    total += 1
+                                    links.append(link)
+                                elif link_ok:
+                                    await self.dispatch_channel(message, jumpLink)
+                                    total += 1
+                                    links.append(link)
+                            else:
+                                print(f'链接已存在，link: {link}')
+            self.checkbox['links'] = links
+            self.checkbox['sizes'] = sizes
+            print(f"从 {chat_name} 转发资源 成功: {total}")
+        except Exception as e:
+            print(f"从 {chat_name} 转发资源 失败: {e}")
     async def main(self):
         await self.checkhistory()
         if not os.path.exists(self.download_folder):
@@ -471,28 +503,26 @@ if __name__ == '__main__':
     limit = 20
     # 监控消息中评论数，有些视频、资源链接被放到评论中
     replies_limit = 1
-    kw = ['链接', '片名', '名称', '剧名','magnet','drive.uc.cn','caiyun.139.com','cloud.189.cn','pan.quark.cn','115.com','anxia.com','alipan.com','aliyundrive.com','夸克云盘','阿里云盘','磁力链接']
-    ban = ['预告', '预感', 'https://t.me/', '盈利', '即可观看','书籍','电子书','图书','软件','安卓','Android','课程','作品','教程','全书','名著','mobi','epub','pdf','PDF','PPT','抽奖','完整版','文学','有声','txt','MP3','mp3','WAV','CD','音乐','专辑','资源','模板','书中','读物','入门','零基础','常识','干货','电商','小红书','抖音','资料','华为','短剧','纪录片','纪录','学习']
+    include = ['链接', '片名', '名称', '剧名','magnet','drive.uc.cn','caiyun.139.com','cloud.189.cn','pan.quark.cn','115.com','anxia.com','alipan.com','aliyundrive.com','夸克云盘','阿里云盘','磁力链接']
+    exclude = ['预告', '预感', '盈利', '即可观看','书籍','电子书','图书','丛书','软件','安卓','Android','课程','作品','教程','教学','全书','名著','mobi','epub','pdf','PDF','PPT','抽奖','完整版','文学','写作','节课',
+           '有声','txt','MP3','mp3','WAV','CD','音乐','专辑','模板','书中','读物','入门','零基础','常识','干货','电商','小红书','抖音','资料','华为','短剧','纪录片','记录片','纪录','纪实','学习','付费','小学','初中','数学','语文']
     # 消息中的超链接文字，如果存在超链接，会用url替换文字
-    hyperlink_text = ["点击查看"]
+    hyperlink_text = ["点击查看","【夸克网盘】点击获取","【百度网盘】点击获取","【阿里云盘】点击获取"]
     # 替换消息中关键字(tag/频道/群组)
     replacements = {
         forward_to_channel: ['ucquark','uckuake',"yunpanshare", "yunpangroup", "Quark_0", "Quark_Movies", "guaguale115","Aliyundrive_Share_Channel", "alyd_g", "shareAliyun", "aliyundriveShare", "hao115", "Mbox115","NewQuark", "Quark_Share_Group", "QuarkRobot", "memosfanfan_bot", "aliyun_share_bot", "AliYunPanBot"],
         "动漫": ["国漫", "日漫"],
         "连续剧": ["国剧", "韩剧", "泰剧", "日剧"]
     }
-    # 匹配关键字转发到不同频道/群组，不分组设置channel_match={}即可
-    # channel_match = {
-    #     "tg115": ["115.com","anxia.com"],
-    #     "tgali": ["www.alipan.com","aliyundrive.com"],
-    #     "tguc": ["drive.uc.cn"],
-    #     "tgquark": ["pan.quark.cn"],
-    #     "tg139": ["caiyun.139.com"],
-    #     "tg189": ["cloud.189.cn"],
-    #     "tgmagnet": ["magnet"],
-    #     "tgmusic": ["音乐","专辑","MP3","WAV","CD"]
-    # }
-    channel_match = {}
+    # 匹配关键字分发到不同频道/群组，不需要分发直接设置channel_match=[]即可
+    # channel_match = [
+    #     {
+    #         'include': ['pan.quark.cn'],  # 包含这些关键词
+    #         'exclude': ['无损音乐','音乐','动漫','动画','国漫','日漫','美漫','漫画','真人秀','综艺','韩综'],  # 排除这些关键词
+    #         'target': 'kuake'  # 转发到目标频道/群组
+    #     }
+    # ]
+    channel_match = []
     # 尝试加入公共群组频道，无法过验证
     try_join = False
     # 消息中不含关键词图文，但有些资源被放到消息评论中，如果需要监控评论中资源，需要开启，否则建议关闭
@@ -507,11 +537,11 @@ if __name__ == '__main__':
     string_session = os.environ['STRING_SESSION']
     # 默认不开启代理
     proxy = None
-    # 检测自己频道最近100条消息是否已经包含该资源
+    # 检测自己频道最近500条消息是否已经包含该资源
     checknum = 500
     # 对网盘链接有效性检测
     linkvalidtor = False
     # 允许转发今年之前的资源
     past_years = False
-    TGForwarder(api_id, api_hash, string_session, channels_groups_monitor, forward_to_channel, limit, replies_limit, kw,
-                ban, only_send, nokwforwards, fdown, download_folder, proxy, checknum, linkvalidtor, replacements, channel_match, hyperlink_text, past_years).run()
+    TGForwarder(api_id, api_hash, string_session, channels_groups_monitor, forward_to_channel, limit, replies_limit, include,
+                exclude, only_send, nokwforwards, fdown, download_folder, proxy, checknum, linkvalidtor, replacements, channel_match, hyperlink_text, past_years).run()
