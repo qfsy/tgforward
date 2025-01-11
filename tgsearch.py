@@ -34,7 +34,7 @@ class TGForwarder:
     def __init__(self, api_id, api_hash, string_session, channels_groups_monitor, forward_to_channel,
                  limit, replies_limit, include, exclude, only_send, nokwforwards, fdown, download_folder, proxy, checknum, linkvalidtor, replacements, channel_match, hyperlink_text, past_years, only_today):
         self.urls_kw = ['magnet', 'drive.uc.cn', 'caiyun.139.com', 'cloud.189.cn', 'pan.quark.cn', '115.com', 'anxia.com', 'alipan.com', 'aliyundrive.com']
-        self.checkbox = {"links":[],"sizes":[],"chat_forward_count_msg_id":{},"today_count":0}
+        self.checkbox = {"links":[],"sizes":[],"chat_forward_count_msg_id":{},"today":"","today_count":0}
         self.checknum = checknum
         self.today_count = checknum
         self.history = 'history.json'
@@ -52,7 +52,7 @@ class TGForwarder:
         self.china_timezone_offset = timedelta(hours=8)  # 中国时区是 UTC+8
         self.today = (datetime.utcnow() + self.china_timezone_offset).date()
         # 获取当前年份
-        current_year = datetime.now().year - 4
+        current_year = datetime.now().year - 2
         # 过滤今年之前的影视资源
         if not past_years:
             years_list = [str(year) for year in range(1895, current_year)]
@@ -364,6 +364,80 @@ class TGForwarder:
         # 从 buffer 的尾部开始逆序迭代
         for message in reversed(buffer):
             yield message
+    async def delete_messages_in_time_range(self, chat_name, start_time_str, end_time_str):
+        """
+        删除指定聊天中在指定时间范围内的消息
+        :param chat_name: 聊天名称或ID
+        :param start_time_str: 开始时间字符串，格式为 "YYYY-MM-DD HH:MM"
+        :param end_time_str: 结束时间字符串，格式为 "YYYY-MM-DD HH:MM"
+        """
+        # 中国时区偏移量（UTC+8）
+        china_timezone_offset = timedelta(hours=8)
+        china_timezone = timezone(china_timezone_offset)
+        # 将字符串时间解析为带有时区信息的 datetime 对象
+        start_time = datetime.strptime(start_time_str, "%Y-%m-%d %H:%M").replace(tzinfo=china_timezone)
+        end_time = datetime.strptime(end_time_str, "%Y-%m-%d %H:%M").replace(tzinfo=china_timezone)
+        # 获取聊天实体
+        chat = await self.client.get_entity(chat_name)
+        # 遍历消息
+        async for message in self.client.iter_messages(chat):
+            # 将消息时间转换为中国时区
+            message_china_time = message.date.astimezone(china_timezone)
+            # 判断消息是否在目标时间范围内
+            if start_time <= message_china_time <= end_time:
+                # print(f"删除消息：{message.text} (时间：{message_china_time})")
+                await message.delete()  # 删除消息
+    async def clear_main(self, start_time, end_time):
+        await self.delete_messages_in_time_range(self.forward_to_channel, start_time, end_time)
+    def clear(self):
+        start_time = "2025-01-08 23:55"
+        end_time = "2025-01-09 08:00"
+        with self.client.start():
+            self.client.loop.run_until_complete(self.clear_main(start_time, end_time))
+    async def deduplicate_links(self):
+        """
+        删除聊天中重复链接的旧消息，只保留最新的消息
+        """
+        # 将 links 列表转换为集合，方便快速查找
+        target_links = set(self.checkbox['links'])
+        chats = [self.forward_to_channel]
+        if self.channel_match:
+            for rule in self.channel_match:
+                chats.append(rule['target'])
+        for chat_name in chats:
+            # 用于存储链接和最新消息的ID
+            links_dict = {}
+            # 用于批量删除的消息ID列表
+            messages_to_delete = []
+            # 获取聊天实体
+            chat = await self.client.get_entity(chat_name)
+            # 遍历消息
+            async for message in self.client.iter_messages(chat):
+                if message.message:
+                    # 提取消息中的链接
+                    links_in_message = re.findall(self.pattern, message.message)
+                    if not links_in_message:
+                        continue  # 如果消息中没有链接，跳过
+                    # 检查消息中的链接是否在目标链接列表中
+                    for link in links_in_message:
+                        if link in target_links:  # 只处理目标链接
+                            if link in links_dict:
+                                # 如果链接已存在，比较消息ID
+                                if message.id > links_dict[link]:
+                                    # 当前消息更新，记录旧消息ID
+                                    messages_to_delete.append(links_dict[link])
+                                    # 更新字典中的消息ID
+                                    links_dict[link] = message.id
+                                else:
+                                    # 当前消息是旧的，记录当前消息ID
+                                    messages_to_delete.append(message.id)
+                            else:
+                                # 如果链接不存在，直接记录消息ID
+                                links_dict[link] = message.id
+            # 批量删除旧消息
+            if messages_to_delete:
+                print(f"【{chat_name}】删除 {len(messages_to_delete)} 条历史重复消息")
+                await self.client.delete_messages(chat, messages_to_delete)
     async def checkhistory(self):
         '''
         检索历史消息用于过滤去重
@@ -373,8 +447,9 @@ class TGForwarder:
         if os.path.exists(self.history):
             with open(self.history, 'r', encoding='utf-8') as f:
                 self.checkbox = json.loads(f.read())
-                links = self.checkbox['links']
-                sizes = self.checkbox['sizes']
+                if self.checkbox.get('today') == datetime.now().strftime("%Y-%m-%d"):
+                    links = self.checkbox['links']
+                    sizes = self.checkbox['sizes']
                 self.today_count = self.checkbox.get('today_count') if self.checkbox.get('today_count') else self.checknum
         self.checknum = self.checknum if self.today_count < self.checknum else self.today_count
         chat = await self.client.get_entity(self.forward_to_channel)
@@ -386,8 +461,8 @@ class TGForwarder:
             # 匹配出链接
             if message.message:
                 matches = re.findall(self.pattern, message.message)
-                for match in matches:
-                    links.append(match)
+                if matches:
+                    links.append(matches[0])
         links = list(set(links))
         sizes = list(set(sizes))
         return links,sizes
@@ -395,7 +470,7 @@ class TGForwarder:
         global total
         links = hlinks
         sizes = hsizes
-        print(f'当前监控频道【{chat_name}】，本次检测最近【{len(links)}】条历史消息进行去重')
+        print(f'当前监控频道【{chat_name}】，本次检测最近【{len(links)}】条历史资源进行去重')
         try:
             if try_join:
                 await self.client(JoinChannelRequest(chat_name))
@@ -505,14 +580,12 @@ class TGForwarder:
                             else:
                                 print(f'链接已存在，link: {link}')
             print(f"从 {chat_name} 转发资源 成功: {total}")
-            # return list(set(hlinks+links)), list(set(hsizes+sizes))
             return list(set(links)), list(set(sizes))
         except Exception as e:
             print(f"从 {chat_name} 转发资源 失败: {e}")
     async def main(self):
+        start_time = time.time()
         links,sizes = await self.checkhistory()
-        links = links[-self.checknum:]
-        sizes = sizes[-self.checknum:]
         if not os.path.exists(self.download_folder):
             os.makedirs(self.download_folder)
         for chat_name in self.channels_groups_monitor:
@@ -524,49 +597,21 @@ class TGForwarder:
             total = 0
             links, sizes = await self.forward_messages(chat_name, limit, links, sizes)
         await self.send_daily_forwarded_count()
-        await self.client.disconnect()
         if self.fdown:
             shutil.rmtree(self.download_folder)
         with open(self.history, 'w+', encoding='utf-8') as f:
-            # self.checkbox['links'] = list(self.checkbox['links'] + links)
-            # self.checkbox['sizes'] = list(self.checkbox['sizes'] + sizes)
-            self.checkbox['links'] = list(set(links))
-            self.checkbox['sizes'] = list(set(sizes))
+            self.checkbox['links'] = list(set(links))[-self.checkbox["today_count"]:]
+            self.checkbox['sizes'] = list(set(sizes))[-self.checkbox["today_count"]:]
+            self.checkbox['today'] = datetime.now().strftime("%Y-%m-%d")
             f.write(json.dumps(self.checkbox))
+        # 调用函数，删除重复链接的旧消息
+        await self.deduplicate_links()
+        await self.client.disconnect()
+        end_time = time.time()
+        print(f'耗时: {end_time - start_time} 秒')
     def run(self):
         with self.client.start():
             self.client.loop.run_until_complete(self.main())
-
-    async def delete_messages_in_time_range(self, chat_name, start_time_str, end_time_str):
-        """
-        删除指定聊天中在指定时间范围内的消息
-        :param chat_name: 聊天名称或ID
-        :param start_time_str: 开始时间字符串，格式为 "YYYY-MM-DD HH:MM"
-        :param end_time_str: 结束时间字符串，格式为 "YYYY-MM-DD HH:MM"
-        """
-        # 中国时区偏移量（UTC+8）
-        china_timezone_offset = timedelta(hours=8)
-        china_timezone = timezone(china_timezone_offset)
-        # 将字符串时间解析为带有时区信息的 datetime 对象
-        start_time = datetime.strptime(start_time_str, "%Y-%m-%d %H:%M").replace(tzinfo=china_timezone)
-        end_time = datetime.strptime(end_time_str, "%Y-%m-%d %H:%M").replace(tzinfo=china_timezone)
-        # 获取聊天实体
-        chat = await self.client.get_entity(chat_name)
-        # 遍历消息
-        async for message in self.client.iter_messages(chat):
-            # 将消息时间转换为中国时区
-            message_china_time = message.date.astimezone(china_timezone)
-            # 判断消息是否在目标时间范围内
-            if start_time <= message_china_time <= end_time:
-                # print(f"删除消息：{message.text} (时间：{message_china_time})")
-                await message.delete()  # 删除消息
-    async def clear_main(self, start_time, end_time):
-        await self.delete_messages_in_time_range(self.forward_to_channel, start_time, end_time)
-    def clear(self):
-        start_time = "2025-01-08 23:55"
-        end_time = "2025-01-09 08:00"
-        with self.client.start():
-            self.client.loop.run_until_complete(self.clear_main(start_time, end_time))
 
 
 if __name__ == '__main__':
@@ -579,21 +624,21 @@ if __name__ == '__main__':
     include = ['链接', '片名', '名称', '剧名', 'magnet', 'drive.uc.cn', 'caiyun.139.com', 'cloud.189.cn',
                'pan.quark.cn', '115.com', 'anxia.com', 'alipan.com', 'aliyundrive.com', '夸克云盘', '阿里云盘', '磁力链接']
     exclude = ['小程序', '预告', '预感', '盈利', '即可观看', '书籍', '电子书', '图书', '丛书', '软件', '破解版',
-               '免安装', '安卓', 'Android', '课程', '作品', '教程', '教学', '全书', '名著', 'mobi', 'MOBI', 'epub',
-               'pdf', 'PDF', 'PPT', '抽奖', '完整版', '文学', '写作', '节课', '套装', '话术', '纯净版', '日历''txt', 'MP3',
-               'mp3', 'WAV', 'CD', '音乐', '专辑', '模板', '书中', '读物', '入门', '零基础', '常识', '电商', '小红书',
+               '免安装', '免广告','安卓', 'Android', '课程', '作品', '教程', '教学', '全书', '名著', 'mobi', 'MOBI', 'epub',
+               'pdf', 'PDF', 'PPT', '抽奖', '完整版', '有声书','读者','文学', '写作', '节课', '套装', '话术', '纯净版', '日历''txt', 'MP3',
+               'mp3', 'WAV', 'CD', '音乐', '专辑', '模板', '书中', '读物', '入门', '零基础', '常识', '电商', '小红书','JPG',
                '抖音', '资料', '华为', '短剧', '动漫','动画','国漫','日漫','美漫','漫画', '学习', '付费', '小学', '初中','数学', '语文']
     # 消息中的超链接文字，如果存在超链接，会用url替换文字
     hyperlink_text = ["点击查看", "【夸克网盘】点击获取", "【百度网盘】点击获取", "【阿里云盘】点击获取"]
     # 替换消息中关键字(tag/频道/群组)
     replacements = {
-        forward_to_channel: ['ucquark', 'uckuake', "yunpanshare", "yunpangroup", "Quark_0", "Quark_Movies",
+        forward_to_channel: ["NewAliPan","ucquark", "uckuake", "yunpanshare", "yunpangroup", "Quark_0", "Quark_Movies",
                              "guaguale115", "Aliyundrive_Share_Channel", "alyd_g", "shareAliyun", "aliyundriveShare",
                              "hao115", "Mbox115", "NewQuark", "Quark_Share_Group", "QuarkRobot", "memosfanfan_bot",
-                             "aliyun_share_bot", "AliYunPanBot"],
-        "": ["from 天翼云盘日更频道", "🦜投稿 • 🐝广告合作", " - 影巢", "🌍： 群主自用机场: 守候网络, 9折活动!", "🔥： 阿里云盘播放神器: VidHub",
-             "🔥： 移动云盘免流丝滑挂载播放: VidHub", "树洞频道 • 云盘投稿 • 广告合作", "画境流媒体播放器-免费看奈飞，迪士尼！", "AIFUN 爱翻 BGP入口极速专线",
-             "AIFUN 爱翻 机场", "✈️ 画境频道 • 🌐 画境官网 • 🎁 详情及下载"]
+                             "aliyun_share_bot", "AliYunPanBot","None","大风车","雷锋","热心网友"],
+        "": ["🦜投稿", "• ", "🐝", "树洞频道", "云盘投稿", "广告合作", "✈️ 画境频道", "🌐 画境官网", "🎁 详情及下载", " - 影巢", 
+             "🌍： 群主自用机场: 守候网络, 9折活动!", "🔥： 阿里云盘播放神器: VidHub","🔥： 阿里云盘全能播放神器: VidHub","🔥： 移动云盘免流丝滑挂载播放: VidHub", "画境流媒体播放器-免费看奈飞，迪士尼！",
+             "AIFUN 爱翻 BGP入口极速专线", "AIFUN 爱翻 机场", "from 天翼云盘日更频道","via 匿名"]
     }
     # 匹配关键字分发到不同频道/群组，不需要分发直接设置channel_match=[]即可
     # channel_match = [
