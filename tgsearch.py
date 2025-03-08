@@ -7,10 +7,10 @@ import re
 import asyncio
 import urllib.parse
 from datetime import datetime, timezone, timedelta
-from telethon import TelegramClient,functions, events
-from telethon.tl.types import MessageMediaPhoto, MessageEntityTextUrl
+from telethon import TelegramClient,functions
+from telethon.tl.types import MessageMediaPhoto, MessageEntityTextUrl, Channel, ChatInviteAlready, ChatInvite
 from telethon.sessions import StringSession
-from telethon.tl.functions.messages import GetHistoryRequest
+from telethon.tl.functions.messages import GetHistoryRequest, CheckChatInviteRequest, ImportChatInviteRequest
 from telethon.tl.functions.channels import JoinChannelRequest
 from collections import deque
 
@@ -30,8 +30,8 @@ if os.environ.get("HTTP_PROXY"):
 
 class TGForwarder:
     def __init__(self, api_id, api_hash, string_session, channels_groups_monitor, forward_to_channel,
-                 limit, replies_limit, include, exclude, check_replies, proxy, checknum, replacements, message_md, channel_match, hyperlink_text, past_years, only_today):
-        self.urls_kw = ['magnet', 'drive.uc.cn', 'caiyun.139.com', 'cloud.189.cn', 'pan.quark.cn', '115cdn.com','115.com', 'anxia.com', 'alipan.com', 'aliyundrive.com','pan.baidu.com','mypikpak.com']
+                 limit, replies_limit, include, exclude, check_replies, proxy, checknum, replacements, message_md, channel_match, hyperlink_text, past_years, only_today, try_join):
+        self.urls_kw = ['magnet', 'drive.uc.cn', 'caiyun.139.com', 'cloud.189.cn', 'pan.quark.cn', '115cdn.com','115.com', 'anxia.com', 'alipan.com', 'aliyundrive.com','pan.baidu.com','mypikpak.com','123684.com']
         self.checkbox = {"links":[],"sizes":[],"bot_links":{},"chat_forward_count_msg_id":{},"today":"","today_count":0}
         self.checknum = checknum
         self.today_count = 0
@@ -64,6 +64,7 @@ class TGForwarder:
         self.channel_match = channel_match
         self.check_replies = check_replies
         self.download_folder = 'downloads'
+        self.try_join = try_join
         if not proxy:
             self.client = TelegramClient(StringSession(string_session), api_id, api_hash)
         else:
@@ -342,6 +343,7 @@ class TGForwarder:
             "aliyun": ["alipan.com", "aliyundrive.com"],  # 阿里云
             "pikpak": ["mypikpak.com"],
             "baidu": ["pan.baidu.com"],
+            "123": ["123684.com"],
             "others": []  # 其他
         }
         # 初始化结果字典
@@ -466,9 +468,16 @@ class TGForwarder:
         sizes = hsizes
         print(f'当前监控频道【{chat_name}】，本次检测最近【{len(links)}】条历史资源进行去重')
         try:
-            if try_join:
-                await self.client(JoinChannelRequest(chat_name))
-            chat = await self.client.get_entity(chat_name)
+            chat = None
+            if 'https://t.me/' in chat_name:
+                invite_hash = chat_name.split("/")[-1].lstrip("+")
+                try:
+                    invite = await self.client(CheckChatInviteRequest(invite_hash))
+                    chat = invite.chat
+                except Exception as e:
+                    print(f"检查邀请链接失败: {e}")
+            else:
+                chat = await self.client.get_entity(chat_name)
             messages = self.client.iter_messages(chat, limit=limit, reverse=False)
             async for message in self.reverse_async_iter(messages, limit=limit):
                 if self.only_today:
@@ -583,23 +592,92 @@ class TGForwarder:
         print(f'耗时: {end_time - start_time} 秒')
     def run(self):
         with self.client.start():
+            if self.try_join:
+                self.client.loop.run_until_complete(self.join_channels())
             self.client.loop.run_until_complete(self.main())
+
+    async def join_channels(self):
+        for channel in channels_groups_monitor:
+            if '|' in channel:
+                channel = channel.split('|')[0]
+            if 'https://t.me/' in channel:
+                # 提取邀请链接中的 hash
+                invite_hash = channel.split("/")[-1].lstrip("+")
+                # 检查邀请链接信息
+                try:
+                    invite = await self.client(CheckChatInviteRequest(invite_hash))
+                except Exception as e:
+                    print(f"检查邀请链接失败: {e}")
+                    return None
+                # 检查是否为 ChatInviteAlready（已加入）
+                if isinstance(invite, ChatInviteAlready):
+                    chat = invite.chat
+                    if isinstance(chat, Channel):
+                        channel_id = chat.id
+                        full_channel_id = f"-100{channel_id}"  # 私有频道 ID 格式
+                        print(f"{channel} 频道名称: {chat.title}, channel_id: {channel_id} 完整 ID: {full_channel_id}")
+                        return full_channel_id
+                    else:
+                        print("chat 对象不是 Channel 类型")
+                        return None
+                # 未加入频道
+                elif isinstance(invite, ChatInvite):
+                    if getattr(invite, "channel", False) and getattr(invite, "broadcast", False):
+                        print(f"未加入的私有频道，标题: {invite.title}")
+                        try:
+                            # 加入频道
+                            result = await self.client(ImportChatInviteRequest(invite_hash))
+                            print(f"加入结果: {result}")
+
+                            # 从加入结果中提取频道信息
+                            if hasattr(result, "chats") and result.chats:
+                                chat = result.chats[0]  # 第一个 chat 对象是目标频道
+                                if isinstance(chat, Channel):
+                                    channel_id = chat.id
+                                    full_channel_id = f"-100{channel_id}"
+                                    print(f"{channel} 频道名称: {chat.title} channel_id: {channel_id} 完整 ID: {full_channel_id}")
+                                    return full_channel_id
+                                else:
+                                    print("加入后未找到 Channel 对象")
+                                    return None
+                            else:
+                                print("加入后未返回频道信息")
+                                return None
+                        except Exception as e:
+                            print(f"加入频道失败: {e}")
+                            return None
+                    else:
+                        print("这不是一个私有频道邀请链接，或无权限")
+                        return None
+                else:
+                    print("尚未加入频道，或返回的不是 ChatInviteAlready")
+                    return None
+            else:
+                try:
+                    await self.client(JoinChannelRequest(channel))
+                    print(f"成功加入频道/群组: {channel}")
+                except Exception as e:
+                    print(f"加入频道/群组失败: {channel}, 错误: {e}")
+
+    def run_join(self):
+        with self.client.start():
+            self.client.loop.run_until_complete(self.join_channels())
 
 
 if __name__ == '__main__':
-    channels_groups_monitor = ['yunpanall','MCPH086','zaihuayun','Q66Share','NewAliPan','Oscar_4Kmovies','zyfb115','ucwpzy','ikiviyyp','alyp_TV','alyp_4K_Movies','guaguale115', 'shareAliyun', 'alyp_1', 'yunpanpan', 'hao115', 'yunpanshare','Aliyun_4K_Movies', 'dianyingshare', 'Quark_Movies', 'XiangxiuNB', 'NewQuark|60', 'ydypzyfx','ucpanpan', 'kuakeyun', 'ucquark']
+    channels_groups_monitor = ['https://t.me/+rBbwMtzfIes3NjBl','xx123pan','pan123_share','yunpanall','MCPH086','zaihuayun','Q66Share','NewAliPan','Oscar_4Kmovies','ucwpzy','ikiviyyp','alyp_TV','alyp_4K_Movies','guaguale115', 'shareAliyun', 'alyp_1', 'yunpanpan', 'hao115', 'yunpanshare','Aliyun_4K_Movies', 'dianyingshare', 'Quark_Movies', 'XiangxiuNB', 'NewQuark|60', 'ydypzyfx','ucpanpan', 'kuakeyun', 'ucquark']
     forward_to_channel = os.environ['FORWARD_TO_CHANNEL']
     # 监控最近消息数
     limit = 20
     # 监控消息中评论数，有些视频、资源链接被放到评论中
     replies_limit = 1
-    include = ['链接', '片名', '名称', '剧名', 'magnet', 'drive.uc.cn', 'caiyun.139.com', 'cloud.189.cn',
+    include = ['链接', '片名', '名称', '剧名', 'magnet', 'drive.uc.cn', 'caiyun.139.com', 'cloud.189.cn', '123684.com',
                'pan.quark.cn', '115cdn.com','115.com', 'anxia.com', 'alipan.com', 'aliyundrive.com', '夸克云盘', '阿里云盘', '磁力链接']
     exclude = ['小程序', '预告', '预感', '盈利', '即可观看', '书籍', '电子书', '图书', '丛书', '期刊','app','软件', '破解版','解锁','专业版','高级版','最新版','食谱',
                '免安装', '免广告','安卓', 'Android', '课程', '作品', '教程', '教学', '全书', '名著', 'mobi', 'MOBI', 'epub','任天堂','PC','单机游戏',
-               'pdf', 'PDF', 'PPT', '抽奖', '完整版', '有声书','读者','文学', '写作', '节课', '套装', '话术', '纯净版', '日历''txt', 'MP3',
+               'pdf', 'PDF', 'PPT', '抽奖', '完整版', '有声书','读者','文学', '写作', '节课', '套装', '话术', '纯净版', '日历''txt', 'MP3','网赚',
                'mp3', 'WAV', 'CD', '音乐', '专辑', '模板', '书中', '读物', '入门', '零基础', '常识', '电商', '小红书','JPG','短视频','工作总结',
-               '写真','抖音', '资料', '华为', '动漫','动画','国漫','日漫','美漫','漫画', '学习', '付费', '小学', '初中','数学', '语文']
+               '写真','抖音', '资料', '华为', '短剧', '动漫','动画','国漫','日漫','美漫','漫画', '学习', '付费', '小学', '初中','数学', '语文']
     # 消息中的超链接文字，如果存在超链接，会用url替换文字
     hyperlink_text = {
         "magnet": ["点击查看"],
@@ -611,6 +689,7 @@ if __name__ == '__main__':
         "aliyun": ["【阿里云盘】点击获取","阿里云盘","点击查看"],
         "pikpak": ["PikPak云盘","点击查看"],
         "baidu": ["【百度网盘】点击获取","百度云盘","点击查看"],
+        "123": ["点击查看"],
         "others": ["点击查看"],
     }
     # 替换消息中关键字(tag/频道/群组)
@@ -618,15 +697,15 @@ if __name__ == '__main__':
         forward_to_channel: ["yunpanall","NewAliPan","ucquark", "uckuake", "yunpanshare", "yunpangroup", "Quark_0",
                              "guaguale115", "Aliyundrive_Share_Channel", "alyd_g", "shareAliyun", "aliyundriveShare",
                              "hao115", "Mbox115", "NewQuark", "Quark_Share_Group", "QuarkRobot", "memosfanfan_bot",
-                             "Quark_Movies", "aliyun_share_bot", "AliYunPanBot","None","大风车","雷锋","热心网友"],
-        "": ["🦜投稿", "• ", "🐝", "树洞频道", "云盘投稿", "广告合作", "✈️ 画境频道", "🌐 画境官网", "🎁 详情及下载", " - 影巢", "帮助咨询",
+                             "Quark_Movies", "aliyun_share_bot", "AliYunPanBot","None","大风车","雷锋","热心网友","xx123pan","xx123pan1"],
+        "": ["🦜投稿", "• ", "🐝", "树洞频道", "云盘投稿", "广告合作", "✈️ 画境频道", "🌐 画境官网", "🎁 详情及下载", " - 影巢", "帮助咨询", "🌈 分享人: 自动发布","分享者：123盘社区","🌥云盘频道 - 📦",
              "🌍： 群主自用机场: 守候网络, 9折活动!", "🔥： 阿里云盘播放神器: VidHub","🔥： 阿里云盘全能播放神器: VidHub","🔥： 移动云盘免流丝滑挂载播放: VidHub", "画境流媒体播放器-免费看奈飞，迪士尼！",
              "AIFUN 爱翻 BGP入口极速专线", "AIFUN 爱翻 机场", "from 天翼云盘日更频道","via 匿名","🖼️ 奥斯卡4K蓝光影视站","投稿: 点击投稿","────────────────","【1】需要迅雷云盘链接请进群，我会加入更新",
-             "【2】求随手单点频道内容，点赞❤️👍等表情","【3】帮找❗️资源（别客气）","【4】目前共4个频道，分类内容发布↓","【5】更多请看简介［含™「莫愁片海•拾贝十倍」社群］与🐧/🌏正式群"]
+             "【2】求随手单点频道内容，点赞❤️👍等表情","【3】帮找❗️资源，好片源（别客气）","【4】目前共4个频道，分类内容发布↓","【5】更多请看简介［含™「莫愁片海•拾贝十倍」社群］与🐧/🌏正式群"," - 📌"]
     }
     # 自定义统计置顶消息，markdown格式
     message_md = (
-        "**pp-tgsearch**\n\n"
+        "**泡泡-tgsearch**\n\n"
     )
     # 匹配关键字分发到不同频道/群组，不需要分发直接设置channel_match=[]即可
     # channel_match = [
@@ -637,7 +716,7 @@ if __name__ == '__main__':
     #     }
     # ]
     channel_match = []
-    # 尝试加入公共群组频道，无法过验证
+    # 尝试加入群组/频道
     try_join = False
     # 消息中不含关键词图文，但有些资源被放到消息评论中，如果需要监控评论中资源，需要开启，否则建议关闭
     check_replies = False
@@ -653,5 +732,4 @@ if __name__ == '__main__':
     past_years = False
     # 只允许转发当日的
     only_today = True
-    TGForwarder(api_id, api_hash, string_session, channels_groups_monitor, forward_to_channel, limit, replies_limit,
-                include,exclude, check_replies, proxy, checknum, replacements,message_md,channel_match, hyperlink_text, past_years, only_today).run()
+    TGForwarder(api_id, api_hash, string_session, channels_groups_monitor, forward_to_channel, limit, replies_limit,include,exclude, check_replies, proxy, checknum, replacements,message_md,channel_match, hyperlink_text, past_years, only_today, try_join).run()
