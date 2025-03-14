@@ -31,7 +31,7 @@ jobs:
         API_ID: ${{ secrets.API_ID }}
         API_HASH: ${{ secrets.API_HASH }}
         STRING_SESSION: ${{ secrets.STRING_SESSION }}
-        TARGET_CHANNEL: ${{ secrets.FORWARD_TO_CHANNEL }}
+        FORWARD_TO_CHANNEL: ${{ secrets.FORWARD_TO_CHANNEL }}
       run: |
         python tgsearch.py
 
