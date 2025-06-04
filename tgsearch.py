@@ -724,7 +724,7 @@ if __name__ == '__main__':
                                'NewAliPan','Oscar_4Kmovies','ucwpzy','alyp_TV','alyp_4K_Movies','guaguale115', 'shareAliyun', 'alyp_1', 'yunpanpan',
                                'hao115', 'yunpanshare', 'dianyingshare', 'Quark_Movies', 'XiangxiuNB', 'NewQuark|60', 'ydypzyfx',
                                'ucpanpan', 'kuakeyun', 'ucquark','djku123','xx123pan','yingshifenxiang123','zyfb123','pan123pan','tyypzhpd','tianyirigeng']
-    forward_to_channel = 'tgsearchers2'
+    forward_to_channel = os.environ['FORWARD_TO_CHANNEL']
     # 监控最近消息数
     limit = 20
     # 监控消息中评论数，有些视频、资源链接被放到评论中
