@@ -731,10 +731,22 @@ class TGForwarder:
 
 
 if __name__ == '__main__':
-    channels_groups_monitor = ['SharePanBaidu','yunpanxunlei','tianyifc','BaiduCloudDisk','txtyzy','peccxinpd','gotopan','xingqiump4','yunpanqk','PanjClub','kkxlzy','baicaoZY','MCPH01','share_aliyun','pan115_share','bdwpzhpd','ysxb48','https://t.me/+rBbwMtzfIes3NjBl','pankuake_share','jdjdn1111','yggpan','yunpanall','MCPH086','zaihuayun','Q66Share',
-                               'NewAliPan','Oscar_4Kmovies','ucwpzy','alyp_TV','alyp_4K_Movies','guaguale115', 'shareAliyun', 'alyp_1', 'yunpanpan',
-                               'hao115', 'yunpanshare', 'dianyingshare', 'Quark_Movies', 'XiangxiuNB', 'NewQuark|60', 'ydypzyfx',
-                               'kuakeyun', 'ucquark','xx123pan','yingshifenxiang123','zyfb123','pan123pan','tyypzhpd','tianyirigeng']
+    channels_groups_monitor = [
+        'SharePanBaidu', 'yunpanxunlei', 'tianyifc', 'BaiduCloudDisk', 'txtyzy',
+        'peccxinpd', 'gotopan', 'xingqiump4', 'yunpanqk', 'PanjClub',
+        'kkxlzy', 'baicaoZY', 'MCPH01', 'share_aliyun', 'pan115_share',
+        'bdwpzhpd', 'ysxb48',
+        'jdjdn1111', 'yggpan', 'yunpanall', 'MCPH086', 'zaihuayun', 'Q66Share',
+        'NewAliPan', 'Oscar_4Kmovies', 'ucwpzy', 'alyp_TV', 'alyp_4K_Movies',
+        'guaguale115', 'shareAliyun', 'alyp_1', 'yunpanpan', 'hao115',
+        'yunpanshare', 'dianyingshare', 'Quark_Movies', 'XiangxiuNBB', 'NewQuark|60',
+        'ydypzyfx', 'kuakeyun', 'ucquark', 'xx123pan', 'yingshifenxiang123',
+        'zyfb123', 'pan123pan', 'tyypzhpd', 'tianyirigeng', 'cloud189_group',
+        'cloudtianyi', 'hdhhd21', 'Lsp115', 'oneonefivewpfx', 'Maidanglaocom',
+        'qixingzhenren', 'taoxgzy', 'tgsearchers115', 'Channel_Shares_115'
+        'tyysypzypd', 'vip115hot', 'wp123zy', 'yunpan139', 'ysxb69',
+        'yunpan189', 'yunpanuc', 'yydf_hzl', 'alyp_Animation', 'alyp_JLP','yeqingjie_GJG666'
+    ]
     forward_to_channel = os.environ['FORWARD_TO_CHANNEL']
     # 监控最近消息数
     limit = 20
@@ -753,7 +765,7 @@ if __name__ == '__main__':
         "ed2k": ["点击查看","@@"],
         "uc": ["点击查看","@@"],
         "mobile": ["点击查看","@@"],
-        "tianyi": ["点击查看","@@"],
+        "tianyi": ["直达链接","@@"],
         "quark": ["😀 Quark","【夸克网盘】点击获取","夸克云盘","点击查看","@@"],
         "115": ["😀 115","115云盘","点击查看","@@"],
         "aliyun": ["😀 Alipan","【阿里云盘】点击获取","阿里云盘","点击查看","@@"],
@@ -764,13 +776,13 @@ if __name__ == '__main__':
     }
     # 替换消息中关键字(tag/频道/群组)
     replacements = {
-        forward_to_channel: ['xlshare','yunpangroup','pan123pan','juziminmao',"yunpanall","NewAliPan","ucquark", "uckuake", "yunpanshare", "yunpangroup", "Quark_0",
-                             "guaguale115", "Aliyundrive_Share_Channel", "alyd_g", "shareAliyun", "aliyundriveShare",
-                             "hao115", "Mbox115", "NewQuark", "Quark_Share_Group", "QuarkRobot", "memosfanfan_bot",'pankuake_share',
-                             "Quark_Movies", "aliyun_share_bot", "AliYunPanBot","None","大风车","雷锋","热心网友","xx123pan","xx123pan1"],
+        forward_to_channel: ['xlshare','yunpangroup','pan123pan','juziminmao',"yunpanall","NewAliPan","ucquark", "uckuake", "yunpanshare", "yunpangroup", "Quark_0",'ShiShuTiaoA',
+                             "guaguale115", "Aliyundrive_Share_Channel", "alyd_g", "shareAliyun", "aliyundriveShare","yeqinghuibot","yeqingjie_GJG666",'yydf_hzl','share_123pan_bot'
+                             "hao115", "Mbox115", "NewQuark", "Quark_Share_Group", "QuarkRobot", "memosfanfan_bot",'pankuake_share','SharePanBaidu','share_pan','sharepan_bot',
+                             "Quark_Movies", "aliyun_share_bot", "AliYunPanBot","None","大风车","雷锋","热心网友","xx123pan","xx123pan1","share_123pan_bot","🧑🏻‍🚀  订阅同步","🧑🏻‍🚀  订阅直达"],
         "": ['via Hamilton 分享','via 孔 子','🕸源站：https://tv.yydsys.top','via 特别大 爱新觉罗',"🦜投稿", "• ", "🐝", "树洞频道", "云盘投稿", "广告合作", "✈️ 画境频道", "🌐 画境官网", "🎁 详情及下载", " - 影巢", "帮助咨询", "🌈 分享人: 自动发布","分享者：123盘社区","🌥云盘频道 - 📦",
              "🌍： 群主自用机场: 守候网络, 9折活动!", "🔥： 阿里云盘播放神器: VidHub","🔥： 阿里云盘全能播放神器: VidHub","🔥： 移动云盘免流丝滑挂载播放: VidHub", "画境流媒体播放器-免费看奈飞，迪士尼！",'播放神器: VidHub','🔥： https://www.alipan.com/s/2gk164mf2oN',
-             "AIFUN 爱翻 BGP入口极速专线", "AIFUN 爱翻 机场", "from 天翼云盘日更频道","via 匿名","🖼️ 奥斯卡4K蓝光影视站","投稿: 点击投稿","────────────────","【1】需要迅雷云盘链接请进群，我会加入更新",
+             "AIFUN 爱翻 BGP入口极速专线", "AIFUN 爱翻 机场", "from 天翼云盘日更频道","via 匿名","🖼️ 奥斯卡4K蓝光影视站","投稿: 点击投稿","────────────────","【1】需要迅雷云盘链接请进群，我会加入更新", '⚠️ 版权：版权反馈/DMCA','📢 频道 👥 群组 🔍 投稿/搜索',
              "【2】求随手单点频道内容，点赞❤️👍等表情","【3】帮找❗️资源，好片源（别客气）","【4】目前共４个频道，分类内容发布↓","【5】更多请看简介［含™「莫愁片海•拾贝十倍」社群］与🐧/🌏正式群"," - 📌","🚀 频 道: 热剧追更","🔍 群 组: 聚合搜索","💬 公众号: 爱影搜","🌈 分享自: 爱影VIP"]
     }
     # 自定义统计置顶消息，markdown格式
