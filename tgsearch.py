@@ -954,7 +954,7 @@ if __name__ == '__main__':
         'yunpanuc', 'yunpanx', 'yunpanxunlei', 'zaihuayun', 'zdqxm', 'zyfb123', 'zyywpzy',
         '-1002789097359', '-1002726412745', '-1002605109003', '-1002563574998', '-1002023050367', '-1002054107535',
     ]
-    forward_to_channel = 'tgsearchers6'
+    forward_to_channel = os.environ['FORWARD_TO_CHANNEL']
     # 监控最近消息数
     limit = 20
     include = ['链接', '片名', '名称', '剧名', 'ed2k', 'magnet', 'drive.uc.cn', 'caiyun.139.com', 'yun.139.com',
