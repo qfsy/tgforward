@@ -928,7 +928,7 @@ class TGForwarder:
 
 if __name__ == '__main__':
     channels_groups_monitor = [
-        'Aliyun_4K_Movies', 'BaiduCloudDisk', 'Baidu_netdisk', 'BooksRealm', 'CBduanju',
+        'Aliyun_4K_Movies', 'QQ511osi', 'BaiduCloudDisk', 'Baidu_netdisk', 'BooksRealm', 'CBduanju',
         'Channel_Shares_115', 'D_wusun', 'FLMdongtianfudi', 'KaiPanshare', 'Lsp115',
         'MCPH01', 'MCPH02', 'MCPH03', 'MCPH086', 'Movie888035', 'Netdisk_Movies',
         'Oscar_4Kmovies', 'PanjClub', 'PikPak_Share_Channel', 'Q66Share', 'QQZYDAPP',
