@@ -10,10 +10,13 @@ import asyncio
 import urllib.parse
 from datetime import datetime, timezone, timedelta
 from telethon import TelegramClient, functions, utils
-from telethon.tl.types import MessageMediaPhoto, MessageEntityTextUrl, ChatInviteAlready, ChatInvite, Channel, Chat
+from telethon.tl.types import (MessageMediaPhoto, MessageEntityTextUrl, ChatInviteAlready, ChatInvite, Channel, Chat,
+                               InputPeerChannel)
 from telethon.sessions import StringSession
 from telethon.tl.functions.messages import GetHistoryRequest, CheckChatInviteRequest, ImportChatInviteRequest
 from telethon.tl.functions.channels import JoinChannelRequest
+from telethon.errors import (FloodWaitError, UsernameNotOccupiedError, UsernameInvalidError,
+                             ChannelPrivateError, ChannelInvalidError)
 from collections import deque
 
 '''
@@ -39,7 +42,7 @@ class TGForwarder:
                         'pan.baidu.com', 'mypikpak.com', '123684.com', '123685.com', '123912.com', '123pan.com',
                         '123pan.cn', '123592.com', 'guangyapan.com']
         self.checkbox = {"links": [], "sizes": [], "bot_links": {}, "reply_links": {}, "chat_forward_count_msg_id": {},
-                         "today": "", "today_count": 0}
+                         "today": "", "today_count": 0, "peers": {}, "bad_peers": {}}
         self.checknum = checknum
         self.today_count = 0
         self.history = 'history.json'
@@ -93,6 +96,69 @@ class TGForwarder:
         self.download_folder = 'downloads'
         self.try_join = try_join
         self.client = TelegramClient(StringSession(string_session), api_id, api_hash, proxy=proxy)
+        # 实体缓存（本次运行内）
+        self.entity_cache = {}
+        # 触发用户名解析限流后置True，本次不再解析新的用户名
+        self.resolve_blocked = False
+        # 失效频道跳过天数
+        self.bad_peer_days = 3
+
+    async def get_chat(self, name, mark_bad=True):
+        """
+        获取频道/群组实体，尽量避免触发 ResolveUsernameRequest（限流很严）
+        顺序: 本次运行缓存 -> 持久化的(id, access_hash) -> get_input_entity(优先走session缓存) -> 用户名解析
+        """
+        key = str(name)
+        if key in self.entity_cache:
+            return self.entity_cache[key]
+
+        peers = self.checkbox.setdefault("peers", {})
+        bad = self.checkbox.setdefault("bad_peers", {})
+
+        # 近期确认失效的频道直接跳过
+        if mark_bad and key in bad:
+            try:
+                days = (datetime.now() - datetime.strptime(bad[key], "%Y-%m-%d")).days
+            except Exception:
+                days = 999
+            if days < self.bad_peer_days:
+                raise RuntimeError(f'{key} 近期已确认不可用，跳过')
+            bad.pop(key, None)
+
+        # 1. 持久化缓存
+        if key in peers:
+            try:
+                cid, ah = peers[key]
+                chat = await self.client.get_entity(InputPeerChannel(cid, ah))
+                self.entity_cache[key] = chat
+                return chat
+            except FloodWaitError:
+                raise
+            except Exception as e:
+                print(f'缓存的 peer 失效，重新解析 {key}: {e}')
+                peers.pop(key, None)
+
+        # 2. 重新解析
+        target = int(key) if key.lstrip('-').isdecimal() else key
+        if isinstance(target, str) and self.resolve_blocked:
+            raise RuntimeError(f'ResolveUsername 被限流，跳过 {key}')
+        try:
+            inp = await self.client.get_input_entity(target)  # 先查session缓存，查不到才请求
+            chat = await self.client.get_entity(inp)  # 传入InputPeer，不会触发用户名解析
+        except FloodWaitError as e:
+            self.resolve_blocked = True
+            print(f'触发限流 FloodWait {e.seconds}s，本次不再解析新的用户名')
+            raise
+        except (UsernameNotOccupiedError, UsernameInvalidError, ChannelPrivateError, ChannelInvalidError,
+                ValueError) as e:
+            if mark_bad:
+                bad[key] = datetime.now().strftime("%Y-%m-%d")
+            print(f'频道不可用 {key}: {e}')
+            raise
+        if isinstance(inp, InputPeerChannel):
+            peers[key] = [inp.channel_id, inp.access_hash]
+        self.entity_cache[key] = chat
+        return chat
 
     def random_wait(self, min_ms, max_ms):
         min_sec = min_ms / 1000
@@ -183,11 +249,11 @@ class TGForwarder:
     async def get_peer(self, client, channel_name):
         peer = None
         try:
-            peer = await client.get_input_entity(channel_name)
+            chat = await self.get_chat(channel_name)
+            peer = utils.get_input_peer(chat)
         except Exception as e:
             print(f"Unexpected error: {e}")
-        finally:
-            return peer
+        return peer
 
     async def get_all_replies(self, chat_name, message):
         '''
@@ -263,7 +329,8 @@ class TGForwarder:
         if self.channel_match:
             for rule in self.channel_match:
                 target_channel_msg_id = chat_forward_count_msg_id.get(rule['target'])
-                await self.client.delete_messages(rule['target'], [target_channel_msg_id])
+                if target_channel_msg_id:
+                    await self.client.delete_messages(rule['target'], [target_channel_msg_id])
 
     async def send_daily_forwarded_count(self):
         await self.del_channel_forward_count_msg()
@@ -438,7 +505,7 @@ class TGForwarder:
         start_time = datetime.strptime(start_time_str, "%Y-%m-%d %H:%M").replace(tzinfo=china_timezone)
         end_time = datetime.strptime(end_time_str, "%Y-%m-%d %H:%M").replace(tzinfo=china_timezone)
         # 获取聊天实体
-        chat = await self.client.get_entity(chat_name)
+        chat = await self.get_chat(chat_name, mark_bad=False)
         # 遍历消息
         async for message in self.client.iter_messages(chat):
             # 将消息时间转换为中国时区
@@ -517,31 +584,34 @@ class TGForwarder:
             for rule in self.channel_match:
                 chats.append(rule['target'])
         for chat_name in chats:
-            # 已经存在的link
-            links_exist = set()
-            # 用于批量删除的消息ID列表
-            messages_to_delete = []
-            # 获取聊天实体
-            chat = await self.client.get_entity(chat_name)
-            # 遍历消息
-            messages = self.client.iter_messages(chat)
-            async for message in messages:
-                if message.message:
-                    # 提取消息中的链接
-                    links_in_message = re.findall(self.pattern, message.message, re.VERBOSE)
-                    if not links_in_message:
-                        continue  # 如果消息中没有链接，跳过
-                    link = links_in_message[0]
-                    # 检查消息中的链接是否在目标链接列表中
-                    if link in target_links:  # 只处理目标链接
-                        if link in links_exist:
-                            messages_to_delete.append(message.id)
-                        else:
-                            links_exist.add(link)
-            # 批量删除旧消息
-            if messages_to_delete:
-                print(f"【{chat_name}】删除 {len(messages_to_delete)} 条历史重复消息")
-                await self.client.delete_messages(chat, messages_to_delete)
+            try:
+                # 已经存在的link
+                links_exist = set()
+                # 用于批量删除的消息ID列表
+                messages_to_delete = []
+                # 获取聊天实体
+                chat = await self.get_chat(chat_name, mark_bad=False)
+                # 遍历消息
+                messages = self.client.iter_messages(chat)
+                async for message in messages:
+                    if message.message:
+                        # 提取消息中的链接
+                        links_in_message = re.findall(self.pattern, message.message, re.VERBOSE)
+                        if not links_in_message:
+                            continue  # 如果消息中没有链接，跳过
+                        link = links_in_message[0]
+                        # 检查消息中的链接是否在目标链接列表中
+                        if link in target_links:  # 只处理目标链接
+                            if link in links_exist:
+                                messages_to_delete.append(message.id)
+                            else:
+                                links_exist.add(link)
+                # 批量删除旧消息
+                if messages_to_delete:
+                    print(f"【{chat_name}】删除 {len(messages_to_delete)} 条历史重复消息")
+                    await self.client.delete_messages(chat, messages_to_delete)
+            except Exception as e:
+                print(f"【{chat_name}】去重失败，已跳过: {e}")
 
     async def checkhistory(self):
         '''
@@ -552,6 +622,15 @@ class TGForwarder:
         if os.path.exists(self.history):
             with open(self.history, 'r', encoding='utf-8') as f:
                 self.checkbox = json.loads(f.read())
+                # 兼容旧版 history.json，补齐缺失字段
+                self.checkbox.setdefault("links", [])
+                self.checkbox.setdefault("sizes", [])
+                self.checkbox.setdefault("bot_links", {})
+                self.checkbox.setdefault("reply_links", {})
+                self.checkbox.setdefault("chat_forward_count_msg_id", {})
+                self.checkbox.setdefault("today_count", 0)
+                self.checkbox.setdefault("peers", {})
+                self.checkbox.setdefault("bad_peers", {})
                 if self.checkbox.get('today') == datetime.now().strftime("%Y-%m-%d"):
                     links = self.checkbox['links']
                     sizes = self.checkbox['sizes']
@@ -563,7 +642,7 @@ class TGForwarder:
                 self.today_count = self.checkbox.get('today_count') if self.checkbox.get(
                     'today_count') else self.checknum
         self.checknum = self.checknum if self.today_count < self.checknum else self.today_count
-        chat = await self.client.get_entity(self.forward_to_channel)
+        chat = await self.get_chat(self.forward_to_channel, mark_bad=False)
         messages = self.client.iter_messages(chat, limit=self.checknum)
         async for message in messages:
             # 视频类型对比大小
@@ -587,7 +666,8 @@ class TGForwarder:
         """
         try:
             # 获取原始消息
-            message = await self.client.get_messages(source_chat, ids=message_id)
+            src = await self.get_chat(source_chat)
+            message = await self.client.get_messages(src, ids=message_id)
             if not message:
                 print("未找到消息")
                 return
@@ -619,11 +699,12 @@ class TGForwarder:
                     print(f"检查邀请链接失败: {e}")
             elif chat_name.startswith('-') and chat_name.lstrip('-').isdecimal() and len(chat_name) > 1:
                 chat_id = int(chat_name)
-                chat = await self.client.get_entity(chat_id)
+                chat = await self.get_chat(chat_name)
+                F = getattr(chat, 'noforwards', False)
                 print(chat_id, chat.title)
             else:
-                chat = await self.client.get_entity(chat_name)
-                F = chat.noforwards
+                chat = await self.get_chat(chat_name)
+                F = getattr(chat, 'noforwards', False)
             messages = self.client.iter_messages(chat, limit=limit, reverse=False)
             async for message in self.reverse_async_iter(messages, limit=limit):
                 # print('bbb', message)
@@ -714,11 +795,26 @@ class TGForwarder:
             return list(set(links)), list(set(sizes))
         except Exception as e:
             print(f"从 {chat_name} 转发资源 失败: {e}")
+            return links, sizes
+
+    def save_history(self):
+        try:
+            self.checkbox['links'] = list(set(self.checkbox.get('links', [])))
+            self.checkbox['today'] = datetime.now().strftime("%Y-%m-%d")
+            with open(self.history, 'w+', encoding='utf-8') as f:
+                f.write(json.dumps(self.checkbox))
+        except Exception as e:
+            print(f'保存 history 失败: {e}')
 
     async def main(self):
         reply = False
         reply_limit = None
         start_time = time.time()
+        # 预热实体缓存：已加入的频道/群组会写入session缓存，后续无需再解析用户名
+        try:
+            await self.client.get_dialogs()
+        except Exception as e:
+            print(f'预热对话列表失败: {e}')
         links, sizes = await self.checkhistory()
         if not os.path.exists(self.download_folder):
             os.makedirs(self.download_folder)
@@ -739,16 +835,23 @@ class TGForwarder:
                 links, sizes = await self.forward_messages(chat_name, limit, links, sizes, reply, reply_limit)
             except Exception as e:
                 continue
-        await self.send_daily_forwarded_count()
-        with open(self.history, 'w+', encoding='utf-8') as f:
-            self.checkbox['links'] = list(set(links))[-self.checkbox["today_count"]:]
-            self.checkbox['sizes'] = list(set(sizes))[-self.checkbox["today_count"]:]
-            self.checkbox['today'] = datetime.now().strftime("%Y-%m-%d")
-            f.write(json.dumps(self.checkbox))
-        # 调用函数，删除重复链接的旧消息
+        try:
+            await self.send_daily_forwarded_count()
+        except Exception as e:
+            print(f'统计置顶消息失败，已跳过: {e}')
+        # 先保存 history（含 peers 缓存），再做去重，避免后续出错导致缓存丢失
+        today_count = self.checkbox.get("today_count") or 0
+        all_links = list(set(links))
+        all_sizes = list(set(sizes))
+        self.checkbox['links'] = all_links[-today_count:] if today_count else all_links
+        self.checkbox['sizes'] = all_sizes[-today_count:] if today_count else all_sizes
+        self.save_history()
         if os.path.exists(self.download_folder):
             shutil.rmtree(self.download_folder)
-        await self.deduplicate_links()
+        try:
+            await self.deduplicate_links()
+        except Exception as e:
+            print(f'去重失败，已跳过: {e}')
         await self.client.disconnect()
         end_time = time.time()
         print(f'耗时: {end_time - start_time} 秒')
@@ -948,7 +1051,7 @@ if __name__ == '__main__':
         'taoxgzy', 'tgbokee', 'tianyifc', 'tianyirigeng', 'tyypzhpd',
         'tyysypzypd', 'ucquark', 'ucshare', 'ucwpzy', 'vip115hot', 'wp123zy', 'yingshiziyuanpindao',
         'xiangnikanj', 'xx123pan', 'xxzlzn', 'ydwpzy', 'djya5', 'pan_guangya',
-                                                                                     'ydypzyfx', 'yeqingjie_GJG666',
+        'ydypzyfx', 'yeqingjie_GJG666',
         'yingshifenxiang123', 'yoyokuakeduanju',
         'yp123pan', 'yydf_hzl', 'yunpan139', 'yunpan189', 'yunpanNB', 'yunpanquark',
         'yunpanuc', 'yunpanx', 'yunpanxunlei', 'zaihuayun', 'zdqxm', 'zyfb123', 'zyywpzy',
