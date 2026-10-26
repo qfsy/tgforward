@@ -8,16 +8,20 @@ on:
 permissions:
   contents: write  # 允许写入仓库内容
 
+concurrency:
+  group: tg-forwarder
+  cancel-in-progress: false
+
 jobs:
   run-script:
     runs-on: ubuntu-latest
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v2
+      uses: actions/checkout@v4
 
     - name: Set up Python
-      uses: actions/setup-python@v2
+      uses: actions/setup-python@v5
       with:
         python-version: '3.11'  # 确保 Python 版本与你的脚本兼容
 
@@ -36,11 +40,13 @@ jobs:
         python tgsearch.py
 
     - name: Commit and Push history.json
+      if: always()
       run: |
         git config --local user.name "GitHub Actions"
         git config --local user.email "github-actions@github.com"
         git add history.json
         git commit -m "Update history.json" || echo "No changes to commit"
+        git pull --rebase || true
         git push
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
